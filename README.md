@@ -1,8 +1,8 @@
-# 🚀 IoT Device Controller System
+# IoT Device Controller System
 
 A complete IoT solution for controlling ESP32 devices remotely through a Flutter mobile app with real-time MQTT communication and a Node.js backend server.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [🏗️ System Architecture](#️-system-architecture)
 - [✨ Features](#-features)
@@ -21,7 +21,7 @@ A complete IoT solution for controlling ESP32 devices remotely through a Flutter
 - [🤝 Contributing](#-contributing)
 - [📄 License](#-license)
 
-## 🏗️ System Architecture
+##  System Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -52,9 +52,9 @@ A complete IoT solution for controlling ESP32 devices remotely through a Flutter
 4. **Command Execution**: Backend publishes commands via MQTT to ESP32
 5. **Data Sync**: Real-time sensor data flows through MQTT to backend to mobile app
 
-## ✨ Features
+##  Features
 
-### 📱 Mobile App Features
+###  Mobile App Features
 - **Device Management**: View all connected IoT devices
 - **Real-time Control**: Turn LED on/off with instant feedback
 - **Live Monitoring**: Real-time sensor data visualization
@@ -63,7 +63,7 @@ A complete IoT solution for controlling ESP32 devices remotely through a Flutter
 - **Responsive UI**: Material Design with smooth animations
 - **Error Handling**: User-friendly error messages and retry mechanisms
 
-### 🖥️ Backend Features
+###  Backend Features
 - **RESTful APIs**: Complete CRUD operations for devices and data
 - **MQTT Integration**: Real-time communication with IoT devices
 - **Data Storage**: SQLite database for persistent data storage
@@ -72,7 +72,7 @@ A complete IoT solution for controlling ESP32 devices remotely through a Flutter
 - **API Documentation**: Well-documented endpoints with examples
 - **Health Monitoring**: System health checks and status endpoints
 
-### 🔌 ESP32 Features
+###  ESP32 Features
 - **WiFi Connectivity**: Automatic connection and reconnection
 - **MQTT Communication**: Bidirectional messaging with backend
 - **Sensor Reading**: Analog sensor data collection
@@ -134,7 +134,7 @@ iot-controller-system/
 └── 📄 README.md                  # This file
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - **Flutter SDK** 3.0+ ([Install Guide](https://flutter.dev/docs/get-started/install))
@@ -178,7 +178,7 @@ flutter run
 3. Open mobile app to see connected devices
 4. Test LED control from mobile app
 
-## 📱 Mobile App
+## Mobile App
 
 ### Features Overview
 The Flutter mobile app provides an intuitive interface for IoT device management:
@@ -226,7 +226,7 @@ flutter build apk --release
 flutter build ios --release
 ```
 
-## 🖥️ Backend Server
+##  Backend Server
 
 ### Architecture Overview
 The Node.js backend serves as the central hub for the IoT system:
@@ -308,7 +308,7 @@ pm2 start server.js --name "iot-backend"
 pm2 logs iot-backend
 ```
 
-## 🔌 ESP32 Firmware
+##  ESP32 Firmware
 
 ### Hardware Requirements
 - **ESP32 Development Board** (ESP32-WROOM-32 recommended)
@@ -376,7 +376,7 @@ iot/[DEVICE_ID]/command   - Commands from server
 4. Select correct board and port
 5. Upload firmware to ESP32
 
-## 🌐 API Documentation
+##  API Documentation
 
 ### Base URL
 ```
@@ -621,7 +621,7 @@ const char* device_id = "esp32_device_001"; // Make unique per device
 #define SENSOR_PIN A0      // Analog sensor input
 ```
 
-## 🧪 Testing
+##  Testing
 
 ### Unit Testing
 
@@ -706,7 +706,7 @@ Serial.print("Free heap: ");
 Serial.println(ESP.getFreeHeap());
 ```
 
-## 📦 Deployment
+##  Deployment
 
 ### Mobile App Deployment
 
@@ -896,7 +896,7 @@ doc["device_token"] = device_token;
 - [ ] Keep all dependencies updated
 - [ ] Implement proper error handling (don't expose internal details)
 
-## 🤝 Contributing
+##  Contributing
 
 We welcome contributions to improve this IoT system! Please follow these guidelines:
 
@@ -977,14 +977,14 @@ SOFTWARE.
 
 ---
 
-## 🆘 Support & Contact
+##  Support & Contact
 
 - **Documentation**: Check the `/docs` folder for detailed guides
 - **Issues**: Report bugs on [GitHub Issues](https://github.com/yourusername/iot-controller-system/issues)
 - **Discussions**: Join conversations in [GitHub Discussions](https://github.com/yourusername/iot-controller-system/discussions)
 - **Email**: raghavrajk24@gmail.com
 
-## 🎯 Roadmap
+##  Roadmap
 
 ### Version 2.0 (Planned)
 - [ ] User authentication and multi-tenancy
@@ -1006,6 +1006,6 @@ SOFTWARE.
 
 ---
 
-**⭐ Star this repository if you find it helpful!**
+** Star this repository if you find it helpful!**
 
 Made with ❤️ for the IoT community
