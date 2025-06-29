@@ -1,0 +1,243 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+#include <Update.h>
+
+// WiFi credentials
+const char* ssid = "YOUR_WIFI_NAME";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+// MQTT broker settings
+const char* mqtt_server = "broker.hivemq.com";  // Free MQTT broker for testing
+const int mqtt_port = 1883;
+const char* device_id = "esp32_device_001";
+
+// Topics
+String status_topic = "iot/" + String(device_id) + "/status";
+String command_topic = "iot/" + String(device_id) + "/command";
+String sensor_topic = "iot/" + String(device_id) + "/sensor";
+
+// Pin definitions
+#define LED_PIN 2
+#define BUTTON_PIN 0
+#define SENSOR_PIN A0
+
+// Create objects
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Variables
+bool ledState = false;
+unsigned long lastSensorRead = 0;
+unsigned long lastHeartbeat = 0;
+const long sensorInterval = 10000;    // Read sensor every 10 seconds
+const long heartbeatInterval = 30000; // Send heartbeat every 30 seconds
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  // Initialize pins
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SENSOR_PIN, INPUT);
+  
+  Serial.println("Starting ESP32 IoT Device...");
+  
+  // Connect to WiFi
+  setupWiFi();
+  
+  // Setup MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(onMqttMessage);
+  
+  Serial.println("ESP32 IoT Device Ready!");
+}
+
+void loop() {
+  // Maintain MQTT connection
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
+  
+  // Read sensor data periodically
+  if (millis() - lastSensorRead > sensorInterval) {
+    readAndSendSensorData();
+    lastSensorRead = millis();
+  }
+  
+  // Send heartbeat
+  if (millis() - lastHeartbeat > heartbeatInterval) {
+    sendHeartbeat();
+    lastHeartbeat = millis();
+  }
+  
+  // Check button press
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    toggleLED();
+    delay(300); // Simple debounce
+  }
+}
+
+void setupWiFi() {
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, password);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  Serial.println("");
+  Serial.println("WiFi connected!");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.print("Connecting to MQTT...");
+    
+    if (client.connect(device_id)) {
+      Serial.println("Connected!");
+      
+      // Subscribe to command topic
+      client.subscribe(command_topic.c_str());
+      Serial.println("Subscribed to: " + command_topic);
+      
+      // Send online status
+      sendStatus("online");
+      
+    } else {
+      Serial.print("Failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" Retrying in 5 seconds...");
+      delay(5000);
+    }
+  }
+}
+
+void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  
+  Serial.println("Message received [" + String(topic) + "]: " + message);
+  
+  // Parse JSON command
+  StaticJsonDocument<200> doc;
+  deserializeJson(doc, message);
+  
+  String command = doc["command"];
+  
+  if (command == "led_on") {
+    digitalWrite(LED_PIN, HIGH);
+    ledState = true;
+    sendStatus("LED turned ON");
+  }
+  else if (command == "led_off") {
+    digitalWrite(LED_PIN, LOW);
+    ledState = false;
+    sendStatus("LED turned OFF");
+  }
+  else if (command == "get_status") {
+    sendHeartbeat();
+  }
+  else if (command == "ota_update") {
+    String url = doc["url"];
+    performOTAUpdate(url);
+  }
+}
+
+void readAndSendSensorData() {
+  // Read analog sensor (0-4095 on ESP32)
+  int sensorValue = analogRead(SENSOR_PIN);
+  float voltage = (sensorValue / 4095.0) * 3.3;
+  
+  // Create JSON payload
+  StaticJsonDocument<200> doc;
+  doc["device_id"] = device_id;
+  doc["timestamp"] = millis();
+  doc["sensor_value"] = sensorValue;
+  doc["voltage"] = voltage;
+  doc["led_state"] = ledState;
+  doc["wifi_strength"] = WiFi.RSSI();
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  // Publish sensor data
+  client.publish(sensor_topic.c_str(), payload.c_str());
+  Serial.println("Sensor data sent: " + payload);
+}
+
+void sendHeartbeat() {
+  StaticJsonDocument<200> doc;
+  doc["device_id"] = device_id;
+  doc["status"] = "online";
+  doc["uptime"] = millis();
+  doc["free_heap"] = ESP.getFreeHeap();
+  doc["wifi_strength"] = WiFi.RSSI();
+  doc["led_state"] = ledState;
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  client.publish(status_topic.c_str(), payload.c_str());
+  Serial.println("Heartbeat sent");
+}
+
+void sendStatus(String message) {
+  StaticJsonDocument<200> doc;
+  doc["device_id"] = device_id;
+  doc["message"] = message;
+  doc["timestamp"] = millis();
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  client.publish(status_topic.c_str(), payload.c_str());
+}
+
+void toggleLED() {
+  ledState = !ledState;
+  digitalWrite(LED_PIN, ledState);
+  
+  String status = ledState ? "LED turned ON (button)" : "LED turned OFF (button)";
+  sendStatus(status);
+}
+
+void performOTAUpdate(String url) {
+  Serial.println("Starting OTA update from: " + url);
+  
+  HTTPClient http;
+  http.begin(url);
+  
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    int contentLength = http.getSize();
+    
+    if (contentLength > 0) {
+      if (Update.begin(contentLength)) {
+        WiFiClient* client = http.getStreamPtr();
+        size_t written = Update.writeStream(*client);
+        
+        if (Update.end()) {
+          Serial.println("OTA Update successful! Rebooting...");
+          sendStatus("OTA update completed, rebooting...");
+          delay(1000);
+          ESP.restart();
+        } else {
+          Serial.println("OTA Update failed!");
+          sendStatus("OTA update failed");
+        }
+      }
+    }
+  }
+  http.end();
+}
