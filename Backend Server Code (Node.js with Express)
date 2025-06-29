@@ -1,0 +1,330 @@
+// server.js - Main server file
+const express = require('express');
+const mqtt = require('mqtt');
+const sqlite3 = require('sqlite3').verbose();
+const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+
+const app = express();
+const PORT = 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+// File upload configuration
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/');
+  },
+  filename: function (req, file, cb) {
+    cb(null, 'firmware.bin');
+  }
+});
+const upload = multer({ storage: storage });
+
+// Database setup
+const db = new sqlite3.Database('./iot_database.db');
+
+// Create tables if they don't exist
+db.serialize(() => {
+  // Devices table
+  db.run(`CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT UNIQUE,
+    name TEXT,
+    status TEXT DEFAULT 'offline',
+    last_seen DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Sensor data table
+  db.run(`CREATE TABLE IF NOT EXISTS sensor_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT,
+    sensor_value INTEGER,
+    voltage REAL,
+    led_state BOOLEAN,
+    wifi_strength INTEGER,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(device_id) REFERENCES devices(device_id)
+  )`);
+
+  // Commands table
+  db.run(`CREATE TABLE IF NOT EXISTS commands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT,
+    command TEXT,
+    parameters TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    executed_at DATETIME
+  )`);
+});
+
+// MQTT Configuration
+const mqttClient = mqtt.connect('mqtt://broker.hivemq.com:1883');
+
+mqttClient.on('connect', () => {
+  console.log('Connected to MQTT broker');
+  
+  // Subscribe to all device topics
+  mqttClient.subscribe('iot/+/status');
+  mqttClient.subscribe('iot/+/sensor');
+  
+  console.log('Subscribed to MQTT topics');
+});
+
+// Handle MQTT messages
+mqttClient.on('message', (topic, message) => {
+  try {
+    const data = JSON.parse(message.toString());
+    const topicParts = topic.split('/');
+    const deviceId = topicParts[1];
+    const messageType = topicParts[2];
+    
+    console.log(`MQTT Message [${topic}]:`, data);
+    
+    if (messageType === 'status') {
+      handleStatusMessage(deviceId, data);
+    } else if (messageType === 'sensor') {
+      handleSensorMessage(deviceId, data);
+    }
+  } catch (error) {
+    console.error('Error parsing MQTT message:', error);
+  }
+});
+
+// Handle device status messages
+function handleStatusMessage(deviceId, data) {
+  // Update device status in database
+  db.run(
+    `INSERT OR REPLACE INTO devices (device_id, status, last_seen) 
+     VALUES (?, ?, CURRENT_TIMESTAMP)`,
+    [deviceId, data.status || 'online']
+  );
+}
+
+// Handle sensor data messages
+function handleSensorMessage(deviceId, data) {
+  // Insert sensor data into database
+  db.run(
+    `INSERT INTO sensor_data 
+     (device_id, sensor_value, voltage, led_state, wifi_strength) 
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      deviceId,
+      data.sensor_value,
+      data.voltage,
+      data.led_state,
+      data.wifi_strength
+    ]
+  );
+  
+  // Update device last seen
+  db.run(
+    `UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`,
+    [deviceId]
+  );
+}
+
+// REST API Endpoints
+
+// Get all devices
+app.get('/api/devices', (req, res) => {
+  db.all('SELECT * FROM devices ORDER BY last_seen DESC', (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json({ devices: rows });
+  });
+});
+
+// Get specific device
+app.get('/api/devices/:deviceId', (req, res) => {
+  const deviceId = req.params.deviceId;
+  
+  db.get('SELECT * FROM devices WHERE device_id = ?', [deviceId], (err, row) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    if (!row) {
+      res.status(404).json({ error: 'Device not found' });
+      return;
+    }
+    res.json({ device: row });
+  });
+});
+
+// Get device sensor data
+app.get('/api/devices/:deviceId/sensor-data', (req, res) => {
+  const deviceId = req.params.deviceId;
+  const limit = req.query.limit || 50;
+  
+  db.all(
+    'SELECT * FROM sensor_data WHERE device_id = ? ORDER BY timestamp DESC LIMIT ?',
+    [deviceId, limit],
+    (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ sensor_data: rows });
+    }
+  );
+});
+
+// Send command to device
+app.post('/api/devices/:deviceId/command', (req, res) => {
+  const deviceId = req.params.deviceId;
+  const { command, parameters } = req.body;
+  
+  if (!command) {
+    res.status(400).json({ error: 'Command is required' });
+    return;
+  }
+  
+  // Save command to database
+  db.run(
+    'INSERT INTO commands (device_id, command, parameters) VALUES (?, ?, ?)',
+    [deviceId, command, JSON.stringify(parameters || {})],
+    function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      
+      // Send command via MQTT
+      const topic = `iot/${deviceId}/command`;
+      const payload = {
+        command: command,
+        ...parameters
+      };
+      
+      mqttClient.publish(topic, JSON.stringify(payload));
+      
+      res.json({
+        success: true,
+        command_id: this.lastID,
+        message: 'Command sent successfully'
+      });
+    }
+  );
+});
+
+// Get device commands
+app.get('/api/devices/:deviceId/commands', (req, res) => {
+  const deviceId = req.params.deviceId;
+  
+  db.all(
+    'SELECT * FROM commands WHERE device_id = ? ORDER BY created_at DESC LIMIT 20',
+    [deviceId],
+    (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ commands: rows });
+    }
+  );
+});
+
+// Upload firmware for OTA
+app.post('/api/firmware/upload', upload.single('firmware'), (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'No firmware file uploaded' });
+    return;
+  }
+  
+  const firmwareUrl = `http://localhost:${PORT}/uploads/firmware.bin`;
+  
+  res.json({
+    success: true,
+    message: 'Firmware uploaded successfully',
+    firmware_url: firmwareUrl
+  });
+});
+
+// Trigger OTA update
+app.post('/api/devices/:deviceId/ota-update', (req, res) => {
+  const deviceId = req.params.deviceId;
+  const firmwareUrl = req.body.firmware_url || `http://localhost:${PORT}/uploads/firmware.bin`;
+  
+  // Send OTA command via MQTT
+  const topic = `iot/${deviceId}/command`;
+  const payload = {
+    command: 'ota_update',
+    url: firmwareUrl
+  };
+  
+  mqttClient.publish(topic, JSON.stringify(payload));
+  
+  // Save command to database
+  db.run(
+    'INSERT INTO commands (device_id, command, parameters) VALUES (?, ?, ?)',
+    [deviceId, 'ota_update', JSON.stringify({ url: firmwareUrl })]
+  );
+  
+  res.json({
+    success: true,
+    message: 'OTA update command sent',
+    firmware_url: firmwareUrl
+  });
+});
+
+// Dashboard stats
+app.get('/api/dashboard/stats', (req, res) => {
+  const stats = {};
+  
+  // Get total devices
+  db.get('SELECT COUNT(*) as total FROM devices', (err, row) => {
+    stats.total_devices = row.total;
+    
+    // Get online devices
+    db.get(
+      `SELECT COUNT(*) as online FROM devices 
+       WHERE status = 'online' AND last_seen > datetime('now', '-5 minutes')`,
+      (err, row) => {
+        stats.online_devices = row.online;
+        
+        // Get total sensor readings today
+        db.get(
+          `SELECT COUNT(*) as readings FROM sensor_data 
+           WHERE date(timestamp) = date('now')`,
+          (err, row) => {
+            stats.sensor_readings_today = row.readings;
+            
+            res.json({ stats });
+          }
+        );
+      }
+    );
+  });
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    mqtt_connected: mqttClient.connected
+  });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`IoT Backend Server running on port ${PORT}`);
+  console.log(`API Documentation: http://localhost:${PORT}/api/health`);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('Shutting down server...');
+  mqttClient.end();
+  db.close();
+  process.exit(0);
+});
