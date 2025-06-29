@@ -14,7 +14,6 @@ app/: Flutter app for Android/iOS with UI assets.
 
 docs/: Deployment guide, screenshots, innovation highlights.
 
-demo_video.mp4: 5-min video showcasing functionality.
 
 Setup Instructions
 Firmware:
